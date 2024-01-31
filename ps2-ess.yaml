@@ -1,0 +1,1169 @@
+asyncapi: 3.0.0
+
+defaultContentType: application/json
+
+info:
+  title: PlanetSide 2 Event Streaming Service
+  version: 1.0.0
+  description: |
+    This is an unofficial specification for the [PlanetSide 2](https://planetside2.com/home) [Event Streaming Service](https://census.daybreakgames.com/#what-is-websocket) (ESS) API used to stream in-game events to clients in near real-time using a WebSocket connection.
+
+    The ESS API is subscription based, meaning that clients must subscribe to the events they want to receive.
+
+    ## Interoperability with the Census REST API
+
+    The ESS and the REST endpoints of the [Census API](https://census.daybreakgames.com/) are separate services with different data sources and update intervals. It is therefore possible for clients to receive events from the ESS API that reference objects that do not exist in the REST endpoints.
+    
+    For example, newly created characters may not be available in the REST API until several minutes after they logged out of the game. Similarly, new outfits or changes to an outfit roster may take several minutes to be reflected in the REST API.
+
+    It is advisable to write clients that can handle such inconsistencies gracefully, either by discarding events that reference unknown objects, or by stashing these messages and retrying them at a later time when the REST API has caught up.
+
+    ## Available Events
+
+    The ESS supports the following events:
+
+    | Event Name | Description | Character-centric | World-centric |
+    |------------|-------------|-------------------|---------------|
+    | `AchievementEarned` | A character has earned a new achievement (weapon medal or service ribbon). | Yes | No |
+    | `BattleRankUp` | A character has gained a Battle Rank. | Yes | No |
+    | `Death` | A character has been killed. Will be sent if either the killer or the victim are part of the subscription. | Yes | No |
+    | `ItemAdded` | A character has been granted an item. This includes pseudo-items such as some terminal interactions or outfit war asset use. | Yes | No |
+    | `SkillAdded` | A character has unlocked a new skill or certification. | Yes | No |
+    | `VehicleDestroy` | A vehicle has been destroyed. | Yes | No |
+    | `GainExperience` | A character has gained experience. It is recommended to [filter for specific experience IDs](filtering-gainexperience-events) where possible. | Yes | No |
+    | `PlayerFacilityCapture` | A player has taken part in capturing a facility. | Yes | No |
+    | `PlayerFacilityDefend` | A player has taken part in defending a facility. | Yes | No |
+    | `ContinentLock` | A continent has been locked. | No | Yes |
+    | `FacilityControl` | A facility has changed control. | No | Yes |
+    | `MetagameEvent` | A metagame event (Alert, Outfit-Wars, etc.) has started or ended. | No | Yes |
+    | `PlayerLogin` | A player has logged in. | Yes | Yes |
+    | `PlayerLogout` | A player has logged out. | Yes | Yes |
+
+    ## Character-centric and World-centric Events
+
+    Events in the ESS are character-centric (`Death`, `GainExperience`, `BattleRankUp`, etc.), world-centric (`ContinentLock`, `FacilityControl`, `MetagameEvent`, etc.), or both (`PlayerLogin` and `PlayerLogout`). Centricity determines whether a subscription is valid - for example, it is not possible to subscribe to `MetagameEvent` with a specific character.
+
+    By default, if both characters and worlds are specified in a subscription, the subscription will us OR logic to determine whether an event matches. However, it is possible to specify AND logic using the `"logicalAndCharactersWithWorlds": true` option of the subscription. This allows filtering character-centric events by world by subscribing to `"all"` characters while filtering for the desired world(s) in the subscription:
+
+    ```json
+    {
+      "service": "event", "action": "subscribe", "eventNames": ["Death"],
+      "characters": ["all"], "worlds": ["10", "13"], "logicalAndCharactersWithWorlds": true
+    }
+    ```
+
+    ## Filtering GainExperience Events
+
+    Due to the large number of experience-related events, it is possible to filter `GainExperience` events further as part of the subscription. To do so, replace the `GainExperience` event name with `GainExperience_experience_id_#`, where `#` is the ID of the experience type to filter for:
+
+    ```json
+    {
+      "service":"event","action":"subscribe","characters":["all"],"eventNames":["GainExperience_experience_id_1"]
+    }
+    ```
+
+    ## Dynamic Zone IDs
+
+    Some zones, such as Sanctuary, tutorial zones or Outfit-Wars instances, are dynamically created and destroyed. They are therefore not available through the REST API and do not have a static zone ID, but they may still be referenced in ESS messages. The IDs of these zones are concatenated from two underlying IDs: a definition ID, which is constant for a given zone type (Nexus, Sanctuary, etc.), and an instance ID, which is used to identify the specific instance of the zone. The instance ID is unique for each instance of a zone type, but may be reused after the zone is destroyed.
+
+    More information and example code can be found on the [PlanetSide 2 API Tracker Wiki](https://github.com/cooltrain7/Planetside-2-API-Tracker/wiki/Tutorial:-Zone-IDs) on GitHub.
+  license:
+    name: Terms of Service
+    url: https://www.daybreakgames.com/terms-of-service
+  tags:
+    - name: subscriptions
+      description: |
+        Messages related to subscription management.
+    - name: events
+      description: |
+        Event messages received due to active subscriptions.
+    - name: system
+      description: |
+        System messages informing the client of the state of the connection.
+    - name: utilities
+      description: |
+        Developer utilities and service introspection messages.
+
+servers:
+  daybreak-games:
+    host: push.planetside2.com/streaming
+    protocol: wss
+    description: |
+      Official event streaming endpoint maintained and operated by Daybreak Games.
+
+      To connect, the following query parameters are required:
+      - `environment`: The environment to connect to. This can be one of `ps2`, `ps2ps4us`, or `ps2ps4eu`. The former covers all PC servers, the latter is for the US and EU PS4 servers respectively. If you wish to track events from all servers, you will need to establish multiple concurrent WebSocket clients.
+      - `service-id`: The unique ID used to identify your service.
+
+      Example URL: `wss://push.planetside2.com/streaming?environment=ps2&service-id=s:example`
+  nanite-systems:
+    host: push.nanite-systems.net/streaming
+    protocol: wss
+    description: |
+      Unofficial community-maintained event streaming endpoint wrapping the official endpoint with a multi-connection manifold.
+
+      This is a drop-in replacement that can help increase resilience against individual subscriptions dropping events for long-running services. For more information, see the [Nanite Systems Website](https://nanite-systems.net/) or [check it out on GitHub](https://github.com/nanite-systems).
+
+      To connect, the same query parameters as the official endpoint are required (see above).
+
+      **Note that this endpoint is not operated by Daybreak Games. The service ID used to connect to this endpoint will be visible to the operator of the endpoint.**
+
+channels:
+  generic:
+    messages:
+      subscribe: { $ref: '#/components/messages/subscribe' }
+      clearSubscribe: { $ref: '#/components/messages/subscribe' }
+      echo: { $ref: '#/components/messages/echo' }
+      help: { $ref: '#/components/messages/help' }
+      recentCharacterIds: { $ref: '#/components/messages/recentCharacterIds' }
+      recentCharacterIdsCount: { $ref: '#/components/messages/recentCharacterIdsCount' }
+
+operations:
+  subscribe:
+    action: send
+    channel: { $ref: '#/channels/generic' }
+    messages:
+      - $ref: '#/channels/generic/messages/subscribe'
+  clearSubscribe:
+    action: send
+    channel: { $ref: '#/channels/generic' }
+    messages:
+      - $ref: '#/channels/generic/messages/subscribe'
+  echo:
+    action: send
+    channel: { $ref: '#/channels/generic' }
+    messages:
+      - $ref: '#/channels/generic/messages/echo'
+  help:
+    action: send
+    channel: { $ref: '#/channels/generic' }
+    messages:
+      - $ref: '#/channels/generic/messages/help'
+  recentCharacterIds:
+    action: send
+    channel: { $ref: '#/channels/generic' }
+    messages:
+      - $ref: '#/channels/generic/messages/recentCharacterIds'
+  recentCharacterIdsCount:
+    action: send
+    channel: { $ref: '#/channels/generic' }
+    messages:
+      - $ref: '#/channels/generic/messages/recentCharacterIdsCount'
+
+components:
+  messages:
+    subscribe:
+      title: Add Subscribtion
+      description: |
+        Subscribe to one or more events for a given character and/or world.
+
+        See the [Available Events](#available-events) section for a list of valid event names.
+
+        Refer to the section on [Character-centric and World-centric Events](#character-centric-and-world-centric-events) for more information on how to handle mixed character and world subscriptions.
+      tags:
+        - name: subscriptions
+      payload:
+        type: object
+        properties:
+          service:
+            type: string
+            enum:
+              - event
+            example: event
+          action:
+            type: string
+            enum:
+              - subscribe
+            example: subscribe
+          eventNames:
+            type: array
+            description: |
+              The names of the events to subscribe to. If `"all"` is specified, the subscription will apply to all events.
+            items:
+              type: string
+              description: |
+                A valid event name. See the [Event Names](#event-names) section for a list of valid event names.
+            example: ["Death"]
+          characters:
+            type: array
+            description: |
+              The IDs of the characters to subscribe to. If `"all"` is specified, the subscription will apply to all characters.
+            items:
+              type: string
+              description: |
+                A character ID, or `"all"`.
+            example: ["all"]
+          worlds:
+            type: array
+            description: |
+              The IDs of the worlds to subscribe to. If `"all"` is specified, the subscription will apply to all worlds.
+            items:
+              type: string
+              description: |
+                A world ID, or `"all"`.
+          logicalAndCharactersWithWorlds:
+            type: boolean
+            description: |
+              If `true`, the subscription will only apply to events where the character AND world match. If `false` or unset, the subscription will apply to events where the character OR the world match.
+        required:
+          - service
+          - action
+          - eventNames  
+    clearSubscribe:
+      title: Clear Subscription
+      description: |
+        Remove an active subscription.
+
+        This follows the same rules as the `subscribe` command, but removes the subscription instead of adding it.
+
+        Setting the `all` option to true will remove all active subscriptions for the current connection.
+      tags:
+        - name: subscriptions
+      payload:
+        type: object
+        properties:
+          service:
+            type: string
+            enum:
+              - event
+            example: event
+          action:
+            type: string
+            enum:
+              - clearSubscribe
+            example: clearSubscribe
+          eventNames:
+            type: array
+            description: |
+              A list of events to unsubscribe from. This field may be omitted when unsubscribing from all events.
+            items:
+              type: string
+              description: |
+                A valid event name. See the [Event Names](#event-names) section for a list of valid event names.
+            example: ["Death"]
+          characters:
+            type: array
+            description: |
+              The IDs of the characters to unsubscribe from. This field may be omitted when unsubscribing from all characters.
+            items:
+              type: string
+              description: |
+                A character ID, or `"all"`.
+            example: ["all"]
+          worlds:
+            type: array
+            description: |
+              The IDs of the worlds to unsubscribe from. This field may be omitted when unsubscribing from all worlds.
+            items:
+              type: string
+              description: |
+                A world ID, or `"all"`.
+          all:
+            type: boolean
+            description: |
+              If `true`, all active subscriptions for the current connection will be removed. If `false` or unset, only the subscriptions matching the other fields will be removed.
+        required:
+          - service
+          - action
+    echo:
+      title: Echo Payload
+      description: |
+        Echoes the payload back to the client. Useful for testing the connection.
+
+        The payload provided with the echo command will be echoed back unchanged by each ESS endpoint the client is connected to. That means that this mechanism can be used for integration testing if the client sends a valid ESS response payload through the echo command.
+      tags:
+        - name: utilities
+      payload:
+        type: object
+        properties:
+          service:
+            type: string
+            enum:
+              - event
+            example: event
+          action:
+            type: string
+            enum:
+              - echo
+            example: echo
+          payload:
+            description: |
+              The payload to be echoed back to the client.
+            type: object
+            example:
+              service: event
+              type: serviceMessage
+              payload:
+                character_id: '5428010618035589553'
+                event_name: FakeEvent
+                timestamp: '1706357108'
+                world_id: '1'
+        required:
+          - service
+          - action
+          - payload
+    help:
+      title: Send Help
+      description: |
+        Return a brief help message via the ESS.
+      tags:
+        - name: utilities
+      payload:
+        type: object
+        properties:
+          service:
+            type: string
+            enum:
+              - event
+            example: event
+          action:
+            type: string
+            enum:
+              - help
+            example: help
+    recentCharacterIds:
+      title: Recent Character IDs
+      description: |
+        Returns a list of character IDs that have been recently seen by the ESS.
+      tags:
+        - name: utilities
+      payload:
+        type: object
+        properties:
+          service:
+            type: string
+            enum:
+              - event
+            example: event
+          action:
+            type: string
+            enum:
+              - recentCharacterIds
+            example: recentCharacterIds
+    recentCharacterIdsCount:
+      title: Recent Character IDs Count
+      description: |
+        Returns the number of character IDs that have been recently seen by the ESS.
+      tags:
+        - name: utilities
+      payload:
+        type: object
+        properties:
+          service:
+            type: string
+            enum:
+              - event
+            example: event
+          action:
+            type: string
+            enum:
+              - recentCharacterIdsCount
+            example: recentCharacterIdsCount
+
+  schemas:
+    AchievementEarned:
+      description: |
+        Event message for the `AchievementEarned` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            event_name:
+              type: string
+              enum:
+                - AchievementEarned
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that earned the achievement.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the achievement was earned.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the character was on when the achievement was earned.
+            achievement_id:
+              type: string
+              description: |
+                The ID of the achievement that was earned.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the character was in when the achievement was earned.
+    BattleRankUp:
+      description: |
+        Event message for the `BattleRankUp` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            event_name:
+              type: string
+              enum:
+                - BattleRankUp
+            battle_rank:
+              type: string
+              description: |
+                The new Battle Rank of the character.
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that gained the Battle Rank.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the Battle Rank was gained.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the character was on when the Battle Rank was gained.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the character was in when the Battle Rank was gained.
+    Death:
+      description: |
+        Event message for the `Death` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            attacker_character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that killed the victim. If equal to the `character_id`, the player died to self-inflicted damage. If `0`, the player died to an environmental hazard such as fall damage.
+            attacker_fire_mode_id:
+              type: string
+              description: |
+                The ID of the fire mode used by the attacker.
+            attacker_loadout_id:
+              type: string
+              description: |
+                The ID of the loadout used by the attacker.
+            attacker_team_id:
+              type: string
+              description: |
+                The ID of the team (or faction) the attacker was on when they killed the victim.
+            attacker_vehicle_id:
+              type: string
+              description: |
+                The ID of the vehicle used by the attacker. If the attacker was not in a vehicle, this field will be `0`.
+            attacker_weapon_id:
+              type: string
+              description: |
+                The ID of the weapon used by the attacker.
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that was killed.
+            character_loadout_id:
+              type: string
+              description: |
+                The ID of the loadout used by the victim.
+            event_name:
+              type: string
+              enum:
+                - Death
+            is_critical:
+              type: string
+              enum:
+                - true
+                - false
+              description: |
+                Whether the attack was a critical hit. Always `false` as there are no critical hits in PlanetSide 2.
+            is_headshot:
+              type: string
+              enum:
+                - true
+                - false
+              description: |
+                Whether the attack was a headshot.
+            team_id:
+              type: string
+              description: |
+                The ID of the team (or faction) the victim was on when they died.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the death occurred.
+            vehicle_id:
+              type: string
+              description: |
+                The ID of the vehicle the victim was in when they died. If the victim was not in a vehicle, this field will be `0`.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the victim was on when they died.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the victim was in when they died.
+    GainExperience:
+      description: |
+        Event message for the `GainExperience` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            amount:
+              type: string
+              description: |
+                The amount of experience gained.
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that gained the experience.
+            event_name:
+              type: string
+              enum:
+                - GainExperience
+            experience_id:
+              type: string
+              description: |
+                The ID of the experience type that was gained.
+            loadout_id:
+              type: string
+              description: |
+                The ID of the loadout the character was using when the experience was gained.
+            other_id:
+              type: string
+              format: int64
+              description: |
+                A secondary ID for the experience type, such as the player that was healed, or the NPC that was destroyed or damaged.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the experience was gained.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the character was on when the experience was gained.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the character was in when the experience was gained.
+    ItemAdded:
+      description: |
+        Event message for the `ItemAdded` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that was granted the item.
+            context:
+              type: string
+              description: |
+                A string describing the context in which the item was granted, such as `SellBundle` for a bundle bought from the depot or `GuildBankWithdrawal` for an outfit war asset withdrawn from the outfit armory.
+            event_name:
+              type: string
+              enum:
+                - ItemAdded
+            item_count:
+              type: string
+              description: |
+                The number of items that were granted.
+            item_id:
+              type: string
+              description: |
+                The ID of the item that was granted.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the item was granted.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the character was on when the item was granted.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the character was in when the item was granted.
+    PlayerFacilityCapture:
+      description: |
+        Event message for the `PlayerFacilityCapture` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that took part in the capture.
+            event_name:
+              type: string
+              enum:
+                - PlayerFacilityCapture
+            facility_id:
+              type: string
+              description: |
+                The ID of the facility that was captured.
+            outfit_id:
+              type: string
+              description: |
+                The ID of the outfit that captured the facility. May be `0` if the facility was captured by non-outfit players.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the capture occurred.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the facility is on.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the facility is in.
+    PlayerFacilityDefend:
+      description: |
+        Event message for the `PlayerFacilityDefend` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that took part in the defense.
+            event_name:
+              type: string
+              enum:
+                - PlayerFacilityDefend
+            facility_id:
+              type: string
+              description: |
+                The ID of the facility that was defended.
+            outfit_id:
+              type: string
+              description: |
+                The ID of the outfit that holds the facility. May be `0` if the facility was not yet captured by an outfit.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the defense occurred.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the facility is on.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the facility is in.
+    PlayerLogin:
+      description: |
+        Event message for the `PlayerLogin` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+        payload:
+          type: object
+          properties:
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that logged in.
+            event_name:
+              type: string
+              enum:
+                - PlayerLogin
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the character logged in.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the character logged in on.
+    PlayerLogout:
+      description: |
+        Event message for the `PlayerLogout` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+        payload:
+          type: object
+          properties:
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that logged out.
+            event_name:
+              type: string
+              enum:
+                - PlayerLogout
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the character logged out.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the character logged out from.
+    SkillAdded:
+      description: |
+        Event message for the `SkillAdded` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+        payload:
+          type: object
+          properties:
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that unlocked the skill.
+            event_name:
+              type: string
+              enum:
+                - SkillAdded
+            skill_id:
+              type: string
+              description: |
+                The ID of the skill that was unlocked.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the skill was unlocked.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the character was on when the skill was unlocked.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the character was in when the skill was unlocked.
+    VehicleDestroy:
+      description: |
+        Event message for the `VehicleDestroy` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+        payload:
+          type: object
+          properties:
+            attacker_character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that destroyed the vehicle.
+            attacker_loadout_id:
+              type: string
+              description: |
+                The ID of the loadout used by the attacker.
+            attacker_team_id:
+              type: string
+              description: |
+                The ID of the team (or faction) the attacker was on when they destroyed the vehicle.
+            attacker_vehicle_id:
+              type: string
+              description: |
+                The ID of the vehicle used by the attacker. If the attacker was not in a vehicle, this field will be `0`.
+            attacker_weapon_id:
+              type: string
+              description: |
+                The ID of the weapon used by the attacker.
+            character_id:
+              type: string
+              format: int64
+              description: |
+                The ID of the character that owned the destroyed vehicle.
+            event_name:
+              type: string
+              enum:
+                - VehicleDestroy
+            facility_id:
+              type: string
+              description: |
+                For facility-bound vehicles such as base turrets, this field will contain the ID of the facility. For all other vehicles, this field will be `0`.
+            faction_id:
+              type: string
+              description: |
+                The ID of the faction that owns the vehicle.
+            team_id:
+              type: string
+              description: |
+                The ID of the team (or faction) the victim was on when they died.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the vehicle was destroyed.
+            vehicle_id:
+              type: string
+              description: |
+                The ID of the vehicle that was destroyed.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the vehicle was on.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the vehicle was in.
+    ContinentLock:
+      description: |
+        Event message for the `ContinentLock` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+        payload:
+          type: object
+          properties:
+            event_name:
+              type: string
+              enum:
+                - ContinentLock
+            metagame_event_id:
+              type: string
+              description: |
+                The ID of the event or alert.
+            nc_population:
+              type: string
+              description: |
+                The population of the New Conglomerate faction in percent.
+            previous_faction:
+              type: string
+              description: |
+                The ID of the faction that previously owned the continent.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the continent was locked.
+            tr_population:
+              type: string
+              description: |
+                The population of the Terran Republic faction in percent.
+            triggering_faction:
+              type: string
+              description: |
+                The ID of the faction that triggered the continent lock.
+            vs_population:
+              type: string
+              description: |
+                The population of the Vanu Sovereignty faction in percent.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the continent is on.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the continent is in.
+    FacilityControl:
+      description: |
+        Event message for the `FacilityControl` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            event_name:
+              type: string
+              enum:
+                - FacilityControl
+            duration_held:
+              type: string
+              description: |
+                The duration the facility was held by the capturing faction in seconds.
+            facility_id:
+              type: string
+              description: |
+                The ID of the facility that changed control.
+            new_faction_id:
+              type: string
+              description: |
+                The ID of the faction that captured the facility. May be `0` if the facility is neutral after the capture.
+            old_faction_id:
+              type: string
+              description: |
+                The ID of the faction that lost control of the facility. May be `0` if the facility was neutral before the capture.
+            outfit_id:
+              type: string
+              description: |
+                The ID of the outfit that captured the facility. May be `0` if the facility was captured by a non-outfit player.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the facility changed control.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the facility is on.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the facility is in.
+    MetagameEvent:
+      description: |
+        Event message for the `MetagameEvent` subscription.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+        type:
+          type: string
+          enum:
+            - serviceMessage
+        payload:
+          type: object
+          properties:
+            event_name:
+              type: string
+              enum:
+                - MetagameEvent
+            experience_bonus:
+              type: string
+              description: |
+                The experience bonus granted by the event.
+            faction_nc:
+              type: string
+              description: |
+                The score of the New Conglomerate faction. For territory control events, this is the percentage of territory controlled.
+            faction_tr:
+              type: string
+              description: |
+                The score of the Terran Republic faction. For territory control events, this is the percentage of territory controlled.
+            faction_vs:
+              type: string
+              description: |
+                The score of the Vanu Sovereignty faction. For territory control events, this is the percentage of territory controlled.
+            instance_id:
+              type: string
+              description: |
+                The ID of the metagame instance. Used to identify the specific instance of an event, such as an outfit wars match.
+            metagame_event_id:
+              type: string
+              description: |
+                The ID of the event or alert.
+            metagame_event_state:
+              type: string
+              description: |
+                The state of the event or alert.
+            metagame_event_state_name:
+              type: string
+              description: |
+                Human-readable Description of the state of the event or alert.
+            timestamp:
+              type: string
+              format: date-time
+              description: |
+                UTC timestamp of when the event or alert started or ended.
+            world_id:
+              type: string
+              description: |
+                The ID of the world the event or alert is on.
+            zone_id:
+              type: string
+              description: |
+                The ID of the zone the event or alert is in.
+
+    Heartbeat:
+      description: |
+        Heartbeat message sent by the ESS to show that the connection is still alive. Also contains status information about the available endpoints.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+          example: event
+        type:
+          type: string
+          enum:
+            - heartbeat
+          example: heartbeat
+        timestamp:
+          type: string
+          format: date-time
+          description: |
+            UTC timestamp of when the heartbeat was sent.
+        online:
+          type: object
+          description: |
+            A map of endpoint names to booleans indicating whether the endpoint is online.
+          additionalProperties:
+            type: string
+            enum:
+              - true
+              - false
+          example:
+            EventServerEndpoint_Cobalt_13: true
+            EventServerEndpoint_Connery_1: true
+            EventServerEndpoint_Emerald_17: true
+            EventServerEndpoint_Jaeger_19: true
+            EventServerEndpoint_Miller_10: true
+            EventServerEndpoint_Soltech_40: true
+    ConnectionStateChanged:
+      description: |
+        System message sent by the ESS to indicate that the connection state has changed.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - push
+          example: push
+        type:
+          type: string
+          enum:
+            - connectionStateChanged
+          example: connectionStateChanged
+        connected:
+          type: string
+          enum:
+            - true
+            - false
+          description: |
+            Whether the connection is currently connected.
+    ServiceStateChanged:
+      description: |
+        System message sent by the ESS to indicate that the service state has changed.
+      type: object
+      properties:
+        service:
+          type: string
+          enum:
+            - event
+          example: event
+        type:
+          type: string
+          enum:
+            - serviceStateChanged
+          example: serviceStateChanged
+        detail:
+          type: string
+          description: |
+            The name of the endpoint that changed state.
+          example: EventServerEndpoint_Soltech_40
+        online:
+          type: string
+          enum:
+            - true
+            - false
+          description: |
+            Whether the endpoint is currently online.
