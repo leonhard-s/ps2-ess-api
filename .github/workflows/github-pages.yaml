@@ -29,3 +29,4 @@ jobs:
         with:
           folder: build
           branch: github-pages
+          commit-message: Deploy AsyncAPI spec
