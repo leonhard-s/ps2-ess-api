@@ -19,7 +19,7 @@ jobs:
       
       - name: Generate
         run: |
-          asyncapi-generator ./asyncapi.yaml @asyncapi/html-template -o ./build/ --force-write --param config=./config.json
+          asyncapi-generator ./ps2-ess.yaml @asyncapi/html-template -o ./build/ --force-write --param config=./config.json
 
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
