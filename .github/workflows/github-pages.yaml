@@ -1,0 +1,28 @@
+name: Generate and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install tools
+        run: |
+          npm install -g @asyncapi/generator
+      
+      - name: Generate
+        run: |
+          asyncapi-generator ./asyncapi.yaml @asyncapi/html-template -o ./build/ --force-write --param config=./config.json
+
+      - name: Deploy
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: build
+          branch: github-pages
